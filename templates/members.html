@@ -462,20 +462,25 @@ function scanMemberNodes() {
   const container = document.getElementById('tree-inner');
   if (!container) return;
 
-  // (이름, 아이디) 문자열 기준 중복 방지 Set
-  const seenKeys = new Set();
+  // 동일 id → Map 으로 last-wins (마지막 파싱 항목이 최종값)
+  // id 가 없는 항목은 별도 배열에 모두 보존
+  const byId  = new Map();   // id(string) → node
+  const noId  = [];          // id 없는 항목
 
   function tryAddNode(el, text) {
     if (!text || text.length > 2000) return;
     const parsed = parseBoxLines(text);
     if (!parsed || (!parsed.name && !parsed.id)) return;
 
-    // 중복 검사: 문자열 완전 일치 기준
-    const k = dedupKey(parsed.name, parsed.id);
-    if (seenKeys.has(k)) return;
-    seenKeys.add(k);
+    const node = { el, ...parsed };
 
-    memberNodes.push({ el, ...parsed });
+    if (parsed.id) {
+      // 동일 id 가 있으면 덮어쓰기(last-wins)
+      // → 같은 계정에 이름이 두 개 등록된 경우 마지막 것을 사용
+      byId.set(parsed.id, node);
+    } else {
+      noId.push(node);
+    }
   }
 
   // ── 전략 1: bgcolor="#001e5f" td 의 부모 table ──
@@ -484,7 +489,7 @@ function scanMemberNodes() {
   ).filter(td => (td.getAttribute('bgcolor') || '').toLowerCase().includes('001e5f'));
 
   if (headerTds.length > 0) {
-    const seenEl = new Set();   // DOM 요소 중복 방지
+    const seenEl = new Set();
     headerTds.forEach(td => {
       const boxTable = td.closest('table');
       if (!boxTable || seenEl.has(boxTable)) return;
@@ -494,7 +499,7 @@ function scanMemberNodes() {
   }
 
   // ── 전략 2 폴백: 날짜를 포함하는 가장 안쪽 table ──
-  if (memberNodes.length === 0) {
+  if (byId.size === 0 && noId.length === 0) {
     Array.from(container.querySelectorAll('table')).forEach(tbl => {
       const text = (tbl.innerText || '').trim();
       if (!DATE_RE.test(text) || text.length > 800) return;
@@ -505,6 +510,8 @@ function scanMemberNodes() {
       tryAddNode(tbl, text);
     });
   }
+
+  memberNodes = [...byId.values(), ...noId];
 
   /* ── 콘솔 디버그 출력 ── */
   console.group(`[계보도] 회원 노드 ${memberNodes.length}개 감지`);
