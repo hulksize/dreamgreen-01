@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
   <title>꿈에그린 계보도</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -165,9 +165,72 @@
     ══════════════════════════════════════ */
     #tree-content {
       padding: 20px;
-      overflow-x: auto;
-      /* 패널 높이만큼 위 여백 – JS로 동적 설정 */
+      overflow: auto;
+      touch-action: manipulation;   /* 모바일 핀치줌 허용 */
     }
+
+    /* 실제 확대/축소 대상 래퍼 */
+    #tree-inner {
+      display: inline-block;       /* 콘텐츠 크기에 맞춤 */
+      transform-origin: top left;
+      transition: transform 0.15s ease;
+    }
+
+    /* ══════════════════════════════════════
+       줌 컨트롤 바 (검색 패널 내부)
+    ══════════════════════════════════════ */
+    .panel-zoom {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 20px 10px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      flex-wrap: wrap;
+    }
+
+    .zoom-label {
+      font-size: 11px;
+      color: rgba(255,255,255,0.7);
+      white-space: nowrap;
+    }
+
+    .btn-zoom {
+      min-width: 44px;
+      min-height: 44px;        /* 모바일 터치 최소 크기 */
+      padding: 0 14px;
+      background: rgba(255,255,255,0.18);
+      border: 1.5px solid rgba(255,255,255,0.35);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s;
+      touch-action: manipulation;
+    }
+    .btn-zoom:hover  { background: rgba(255,255,255,0.32); }
+    .btn-zoom:active { background: rgba(255,255,255,0.45); }
+
+    #zoom-pct {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fbbf24;
+      min-width: 52px;
+      text-align: center;
+      letter-spacing: -0.3px;
+    }
+
+    .btn-zoom-reset {
+      font-size: 13px;
+      min-width: auto;
+      padding: 0 14px;
+      background: rgba(251,191,36,0.22);
+      border-color: rgba(251,191,36,0.5);
+    }
+    .btn-zoom-reset:hover { background: rgba(251,191,36,0.38); }
 
     /* ══════════════════════════════════════
        검색 하이라이트 스타일 (우선순위 강제)
@@ -231,6 +294,15 @@
       <button class="nav-btn" id="btn-next" disabled>다음 ▶</button>
     </div>
   </div>
+
+  <!-- 줌 컨트롤 바 -->
+  <div class="panel-zoom">
+    <span class="zoom-label">조직도 크기</span>
+    <button class="btn-zoom" id="btn-zoom-out"  title="축소">－</button>
+    <span id="zoom-pct">100%</span>
+    <button class="btn-zoom" id="btn-zoom-in"   title="확대">＋</button>
+    <button class="btn-zoom btn-zoom-reset" id="btn-zoom-reset" title="원래 크기">초기화</button>
+  </div>
 </div>
 
 <!-- ══════════════════════ 에러 ══════════════════════ -->
@@ -240,11 +312,13 @@
 
 <!-- ══════════════════════ 계보도 원본 HTML ══════════════════════ -->
 <div id="tree-content">
-  {% if content %}
-    {{ content | safe }}
-  {% elif not error %}
-    <p style="color:#aaa;text-align:center;padding:60px 0;">불러올 내용이 없습니다.</p>
-  {% endif %}
+  <div id="tree-inner">
+    {% if content %}
+      {{ content | safe }}
+    {% elif not error %}
+      <p style="color:#aaa;text-align:center;padding:60px 0;">불러올 내용이 없습니다.</p>
+    {% endif %}
+  </div>
 </div>
 
 <script>
@@ -290,6 +364,46 @@ window.addEventListener('load',   fixPanelZoom);
 window.addEventListener('resize', fixPanelZoom);
 
 /* ══════════════════════════════════════
+   조직도 줌 컨트롤
+   범위: 10% ~ 300%, 단계: 10%
+   transform:scale 은 #tree-inner 에만 적용
+   (패널·스크롤 영역은 그대로)
+══════════════════════════════════════ */
+const ZOOM_MIN  = 10;    // %
+const ZOOM_MAX  = 300;   // %
+const ZOOM_STEP = 10;    // %
+let   zoomPct   = 100;   // 현재 배율
+
+const treeInner  = document.getElementById('tree-inner');
+const zoomPctEl  = document.getElementById('zoom-pct');
+
+function applyZoom() {
+  const scale = zoomPct / 100;
+  treeInner.style.transform = `scale(${scale})`;
+  zoomPctEl.textContent = zoomPct + '%';
+
+  // scale 로 인해 레이아웃 높이가 줄어드므로 스크롤 영역이 잘리지 않게
+  // transform-origin: top left 기준으로 실제 점유 높이를 직접 지정
+  const origH = treeInner.scrollHeight;
+  treeInner.style.marginBottom = (origH * scale - origH) + 'px';
+}
+
+document.getElementById('btn-zoom-out').addEventListener('click', () => {
+  zoomPct = Math.max(ZOOM_MIN, zoomPct - ZOOM_STEP);
+  applyZoom();
+});
+
+document.getElementById('btn-zoom-in').addEventListener('click', () => {
+  zoomPct = Math.min(ZOOM_MAX, zoomPct + ZOOM_STEP);
+  applyZoom();
+});
+
+document.getElementById('btn-zoom-reset').addEventListener('click', () => {
+  zoomPct = 100;
+  applyZoom();
+});
+
+/* ══════════════════════════════════════
    상수 & 상태
 ══════════════════════════════════════ */
 const DATE_RE = /\d{4}[-\/\.]\d{1,2}[-\/\.]\d{1,2}/;
@@ -332,7 +446,7 @@ function parseBoxLines(text) {
 ────────────────────────────────────── */
 function scanMemberNodes() {
   memberNodes = [];
-  const container = document.getElementById('tree-content');
+  const container = document.getElementById('tree-inner');
   if (!container) return;
 
   // ── 전략 1: bgcolor="#001e5f" td 의 부모 table ──
