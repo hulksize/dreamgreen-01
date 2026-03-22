@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>꿈에그린 로그인</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #06033c 0%, #0a0a5e 50%, #067edc 100%);
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 16px;
+      padding: 48px 40px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+
+    .logo {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .logo h1 {
+      font-size: 28px;
+      font-weight: 800;
+      color: #06033c;
+      letter-spacing: -0.5px;
+    }
+
+    .logo p {
+      color: #067edc;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 6px;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 13px 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 15px;
+      color: #222;
+      background: #fafafa;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: #067edc;
+      box-shadow: 0 0 0 3px rgba(6,126,220,0.12);
+      background: #fff;
+    }
+
+    .btn-login {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #067edc, #0a5bbd);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: opacity 0.2s, transform 0.1s;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-login:hover { opacity: 0.92; transform: translateY(-1px); }
+    .btn-login:active { transform: translateY(0); }
+
+    .error-box {
+      background: #fff0f0;
+      border: 1.5px solid #f5a0a0;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 18px;
+      color: #c0392b;
+      font-size: 13.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .error-box::before { content: "⚠"; font-size: 16px; }
+
+    .notice {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 12px;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <h1>꿈에그린</h1>
+      <p>회원 정보 조회 시스템</p>
+    </div>
+
+    {% if error %}
+    <div class="error-box">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="/">
+      <div class="form-group">
+        <label for="userid">아이디</label>
+        <input type="text" id="userid" name="userid"
+               placeholder="아이디를 입력하세요"
+               autocomplete="username"
+               value="{{ request.form.userid or '' }}">
+      </div>
+      <div class="form-group">
+        <label for="userpw">비밀번호</label>
+        <input type="password" id="userpw" name="userpw"
+               placeholder="비밀번호를 입력하세요"
+               autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn-login">로그인</button>
+    </form>
+
+    <p class="notice">dreamgreen.net 계정으로 로그인하세요</p>
+  </div>
+</body>
+</html>

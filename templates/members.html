@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>꿈에그린 계보도</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #f0f4f8;
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+    }
+
+    /* ══════════════════════════════════════
+       고정 검색 패널 (화면 상단 고정)
+    ══════════════════════════════════════ */
+    #search-panel {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 9999;
+      background: linear-gradient(135deg, #06033c 0%, #0a4a9c 100%);
+      box-shadow: 0 3px 18px rgba(0,0,0,0.35);
+    }
+
+    /* 상단 바: 타이틀 + 로그아웃 */
+    .panel-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px 6px;
+    }
+
+    .panel-top h1 {
+      font-size: 17px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+
+    .panel-top h1 small {
+      font-size: 12px;
+      font-weight: 400;
+      opacity: 0.7;
+      margin-left: 8px;
+    }
+
+    .logout-btn {
+      background: rgba(255,255,255,0.13);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      padding: 5px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .logout-btn:hover { background: rgba(255,255,255,0.25); }
+
+    /* 검색 입력 영역 */
+    .panel-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 20px 10px;
+      flex-wrap: wrap;
+    }
+
+    .search-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .search-group label {
+      font-size: 11px;
+      color: rgba(255,255,255,0.75);
+      white-space: nowrap;
+    }
+
+    .search-group input {
+      flex: 1;
+      padding: 7px 12px;
+      border: 1.5px solid rgba(255,255,255,0.25);
+      border-radius: 7px;
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .search-group input::placeholder { color: rgba(255,255,255,0.45); }
+    .search-group input:focus {
+      border-color: rgba(255,255,255,0.7);
+      background: rgba(255,255,255,0.2);
+    }
+
+    .btn-search {
+      padding: 7px 20px;
+      background: #fff;
+      color: #06033c;
+      border: none;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+    .btn-search:hover { opacity: 0.85; }
+
+    .btn-clear {
+      padding: 7px 12px;
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+    .btn-clear:hover { background: rgba(255,255,255,0.25); }
+
+    /* 결과 요약 바 */
+    #result-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 20px 8px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    #result-bar.visible { display: flex; }
+
+    #result-text {
+      font-size: 12.5px;
+      color: rgba(255,255,255,0.9);
+    }
+    #result-text strong { color: #fbbf24; }
+
+    .nav-btns { display: flex; gap: 6px; }
+
+    .nav-btn {
+      padding: 4px 14px;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,0.3); }
+    .nav-btn:disabled { opacity: 0.3; cursor: default; }
+
+    /* ══════════════════════════════════════
+       계보도 원본 HTML 출력 영역
+    ══════════════════════════════════════ */
+    #tree-content {
+      padding: 20px;
+      overflow-x: auto;
+      /* 패널 높이만큼 위 여백 – JS로 동적 설정 */
+    }
+
+    /* ══════════════════════════════════════
+       검색 하이라이트 스타일 (우선순위 강제)
+    ══════════════════════════════════════ */
+    .dg-match {
+      outline: 3px solid #fbbf24 !important;
+      outline-offset: 2px;
+      border-radius: 3px;
+    }
+
+    .dg-current {
+      outline: 3px solid #e11d48 !important;
+      outline-offset: 3px;
+      box-shadow: 0 0 0 7px rgba(225, 29, 72, 0.25) !important;
+      border-radius: 3px;
+      position: relative;
+      z-index: 10;
+    }
+
+    /* ══════════════════════════════════════
+       에러 / 빈 상태
+    ══════════════════════════════════════ */
+    .error-box {
+      margin: 20px;
+      background: #fff0f0;
+      border: 1.5px solid #f5a0a0;
+      border-radius: 10px;
+      padding: 16px 20px;
+      color: #c0392b;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════ 고정 검색 패널 ══════════════════════ -->
+<div id="search-panel">
+  <div class="panel-top">
+    <h1>꿈에그린 계보도 <small>{{ userid }}님</small></h1>
+    <a href="/logout" class="logout-btn">로그아웃</a>
+  </div>
+
+  <div class="panel-search">
+    <div class="search-group">
+      <label>이름 / 아이디</label>
+      <input type="text" id="s-query" placeholder="이름 또는 아이디 입력…">
+    </div>
+    <div class="search-group">
+      <label>날짜</label>
+      <input type="text" id="s-date" placeholder="예: 2023-01-15">
+    </div>
+    <button class="btn-search" id="btn-do-search">검색</button>
+    <button class="btn-clear" id="btn-clear">초기화</button>
+  </div>
+
+  <div id="result-bar">
+    <span id="result-text">검색 결과: <strong id="hit-total">0</strong>개</span>
+    <div class="nav-btns">
+      <button class="nav-btn" id="btn-prev" disabled>◀ 이전</button>
+      <span id="pos-text" style="font-size:12px;color:rgba(255,255,255,0.8);align-self:center;min-width:50px;text-align:center"></span>
+      <button class="nav-btn" id="btn-next" disabled>다음 ▶</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 에러 ══════════════════════ -->
+{% if error %}
+<div class="error-box" style="margin-top: 100px;">⚠ {{ error }}</div>
+{% endif %}
+
+<!-- ══════════════════════ 계보도 원본 HTML ══════════════════════ -->
+<div id="tree-content">
+  {% if content %}
+    {{ content | safe }}
+  {% elif not error %}
+    <p style="color:#aaa;text-align:center;padding:60px 0;">불러올 내용이 없습니다.</p>
+  {% endif %}
+</div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════
+   브라우저 줌 보정 – 검색 패널을 항상 고정 크기로 유지
+   Ctrl+/- 로 페이지 전체가 확대될 때 패널만 역방향 스케일 적용.
+
+   원리:
+     devicePixelRatio 는 OS 스케일 × 브라우저 줌 의 곱.
+     페이지 로드 시 값을 저장해 두고,
+     이후 resize 이벤트에서 변화량(= 브라우저 줌 변화)만큼 역줌 적용.
+══════════════════════════════════════ */
+const INIT_DPR   = window.devicePixelRatio;   // 로드 시 기준값 저장
+const searchPanel = document.getElementById('search-panel');
+
+function fixPanelZoom() {
+  const zoom    = window.devicePixelRatio / INIT_DPR;   // 1 = 변화 없음
+  const inverse = 1 / zoom;
+
+  // CSS zoom 속성으로 역배율 적용 (transform 보다 레이아웃에 간섭 없음)
+  searchPanel.style.zoom = inverse;
+
+  // zoom 을 적용하면 패널의 시각적 높이가 줄어들므로
+  // tree-content 상단 여백을 실제 렌더 높이 기준으로 재계산
+  adjustContentPadding();
+}
+
+/* ══════════════════════════════════════
+   패널 실제 높이만큼 tree-content 상단 여백 동적 적용
+   (zoom 보정 후 offsetHeight 는 줄어드므로 / inverse 로 실 픽셀 복원)
+══════════════════════════════════════ */
+function adjustContentPadding() {
+  const content = document.getElementById('tree-content');
+  const zoom    = window.devicePixelRatio / INIT_DPR;
+  // offsetHeight 는 CSS zoom 영향을 받으므로 × zoom 하면 브라우저 px 기준 높이
+  const realH   = searchPanel.offsetHeight * (1 / (window.devicePixelRatio / INIT_DPR));
+  content.style.paddingTop = (searchPanel.offsetHeight + 8) + 'px';
+}
+
+window.addEventListener('load',   fixPanelZoom);
+window.addEventListener('resize', fixPanelZoom);
+
+/* ══════════════════════════════════════
+   상수 & 상태
+══════════════════════════════════════ */
+const DATE_RE = /\d{4}[-\/\.]\d{1,2}[-\/\.]\d{1,2}/;
+
+let memberNodes = [];   // { el, name, id, date }
+let hits        = [];
+let hitIdx      = -1;
+
+/* ──────────────────────────────────────
+   회원 박스 raw_text 줄바꿈 split 파싱
+   구조: "|\n이름\n아이디\n회원종류\n매출액\n가입일\n|"
+   → "|" 제거 후: [name, id, kind, sales, date]
+────────────────────────────────────── */
+function parseBoxLines(text) {
+  const lines = text.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && l !== '|');
+
+  // 최소 2개 이상이어야 유효 (이름 + 아이디 최소)
+  if (lines.length < 2) return null;
+
+  const name  = lines[0] || '';
+  const id    = lines[1] || '';
+  const kind  = lines[2] || '';
+  const sales = lines[3] || '';
+  const date  = lines[4] || '';
+
+  // 날짜 필드가 날짜 형식이 아니면 전체 텍스트에서 재탐색
+  const realDate = DATE_RE.test(date)
+    ? date
+    : (DATE_RE.exec(text) || [])[0] || '';
+
+  return { name, id, kind, sales, date: realDate };
+}
+
+/* ──────────────────────────────────────
+   회원 노드 감지
+   bgcolor="#001e5f" 인 td 의 부모 table 을 회원 박스로 판정.
+   없으면 날짜 패턴을 가진 가장 안쪽 table 로 폴백.
+────────────────────────────────────── */
+function scanMemberNodes() {
+  memberNodes = [];
+  const container = document.getElementById('tree-content');
+  if (!container) return;
+
+  // ── 전략 1: bgcolor="#001e5f" td 의 부모 table ──
+  const headerTds = Array.from(
+    container.querySelectorAll('td[bgcolor]')
+  ).filter(td => (td.getAttribute('bgcolor') || '').toLowerCase().includes('001e5f'));
+
+  if (headerTds.length > 0) {
+    const seen = new Set();
+    headerTds.forEach(td => {
+      const boxTable = td.closest('table');
+      if (!boxTable || seen.has(boxTable)) return;
+      seen.add(boxTable);
+
+      const text   = (boxTable.innerText || '').trim();
+      if (text.length > 2000) return;
+
+      const parsed = parseBoxLines(text);
+      if (!parsed || (!parsed.name && !parsed.id)) return;
+
+      memberNodes.push({ el: boxTable, ...parsed });
+    });
+  }
+
+  // ── 전략 2 폴백: 날짜를 포함하는 가장 안쪽 table ──
+  if (memberNodes.length === 0) {
+    const allTables = Array.from(container.querySelectorAll('table'));
+    allTables.forEach(tbl => {
+      const text = (tbl.innerText || '').trim();
+      if (!DATE_RE.test(text))  return;
+      if (text.length > 800)    return;
+
+      // 날짜를 가진 자식 table 이 있으면 컨테이너 → 스킵
+      const childHasDate = Array.from(tbl.querySelectorAll('table')).some(
+        c => DATE_RE.test((c.innerText || '').trim())
+      );
+      if (childHasDate) return;
+
+      const parsed = parseBoxLines(text);
+      if (!parsed || (!parsed.name && !parsed.id)) return;
+
+      memberNodes.push({ el: tbl, ...parsed });
+    });
+  }
+
+  /* ── 콘솔 디버그 출력 ── */
+  console.group(`[계보도] 회원 노드 ${memberNodes.length}개 감지`);
+  memberNodes.forEach((n, i) =>
+    console.log(`#${i+1}  이름="${n.name}"  아이디="${n.id}"  날짜="${n.date}"`, n.el)
+  );
+  console.groupEnd();
+}
+
+/* ══════════════════════════════════════
+   공백 제거 정규화 헬퍼
+   "안 정원" → "안정원",  "안 정 원" → "안정원"
+══════════════════════════════════════ */
+function noSpace(str) {
+  return (str || '').replace(/\s+/g, '').toLowerCase();
+}
+
+/* ══════════════════════════════════════
+   검색
+══════════════════════════════════════ */
+function doSearch() {
+  // 공백 제거 후 소문자 정규화
+  const rawQuery = document.getElementById('s-query').value.trim();
+  const rawDate  = document.getElementById('s-date').value.trim();
+  const query    = noSpace(rawQuery);
+  const date     = rawDate.toLowerCase();
+
+  // 이전 하이라이트 제거
+  clearHighlights();
+  hits = [];
+  hitIdx = -1;
+
+  if (!query && !date) {
+    updateResultBar();
+    return;
+  }
+
+  // 노드가 아직 스캔되지 않았으면 스캔
+  if (memberNodes.length === 0) scanMemberNodes();
+
+  console.group(`[검색] query="${query}" date="${date}"  (전체 노드: ${memberNodes.length}개)`);
+  memberNodes.forEach((node, i) => {
+    // 이름·아이디 양쪽 공백 제거 후 비교
+    const nameN  = noSpace(node.name);
+    const idN    = noSpace(node.id);
+    const dateL  = (node.date || '').toLowerCase();
+
+    const matchQ = !query || nameN.includes(query) || idN.includes(query);
+    const matchD = !date  || dateL.includes(date);
+    const matched = matchQ && matchD;
+
+    console.log(
+      `#${i+1} 이름="${node.name}"(norm="${nameN}") 아이디="${node.id}"(norm="${idN}") 날짜="${node.date}"` +
+      ` → nameHit=${nameN.includes(query)} idHit=${idN.includes(query)} dateHit=${dateL.includes(date)} → ${matched ? '✅HIT' : '❌'}`
+    );
+
+    if (matched) {
+      node.el.classList.add('dg-match');
+      hits.push(node.el);
+    }
+  });
+  console.log(`[검색] 결과: ${hits.length}개 일치`);
+  console.groupEnd();
+
+  if (hits.length > 0) {
+    hitIdx = 0;
+    focusHit(0);
+  }
+
+  // 결과바에는 원본 입력값(공백 포함) 그대로 표시
+  updateResultBar(rawQuery, rawDate);
+  adjustContentPadding();
+}
+
+function focusHit(idx) {
+  // 이전 current 제거
+  document.querySelectorAll('.dg-current').forEach(el => el.classList.remove('dg-current'));
+
+  if (hits.length === 0) return;
+  const el = hits[idx];
+  el.classList.add('dg-current');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('pos-text').textContent = `${idx + 1} / ${hits.length}`;
+}
+
+function navigate(dir) {
+  if (hits.length === 0) return;
+  hitIdx = (hitIdx + dir + hits.length) % hits.length;
+  focusHit(hitIdx);
+  updateNavBtns();
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.dg-match, .dg-current').forEach(el => {
+    el.classList.remove('dg-match', 'dg-current');
+  });
+}
+
+function clearSearch() {
+  document.getElementById('s-query').value = '';
+  document.getElementById('s-date').value  = '';
+  clearHighlights();
+  hits   = [];
+  hitIdx = -1;
+  updateResultBar();
+  adjustContentPadding();
+}
+
+function updateResultBar(query, date) {
+  const bar    = document.getElementById('result-bar');
+  const total  = document.getElementById('hit-total');
+  const posEl  = document.getElementById('pos-text');
+  const resEl  = document.getElementById('result-text');
+
+  if (!query && !date) {
+    bar.classList.remove('visible');
+    return;
+  }
+
+  bar.classList.add('visible');
+  total.textContent = hits.length;
+
+  // 검색어 표시 (예: "이창현 검색결과: 3개")
+  const label = [query, date].filter(Boolean).join(' + ');
+  resEl.innerHTML = `<strong>"${label}"</strong> 검색결과: <strong>${hits.length}</strong>개`;
+
+  posEl.textContent = hits.length > 0 ? `${hitIdx + 1} / ${hits.length}` : '';
+  updateNavBtns();
+}
+
+function updateNavBtns() {
+  const prev = document.getElementById('btn-prev');
+  const next = document.getElementById('btn-next');
+  prev.disabled = hits.length <= 1;
+  next.disabled = hits.length <= 1;
+}
+
+/* ══════════════════════════════════════
+   이벤트 바인딩
+══════════════════════════════════════ */
+document.getElementById('btn-do-search').addEventListener('click', doSearch);
+document.getElementById('btn-clear').addEventListener('click', clearSearch);
+document.getElementById('btn-prev').addEventListener('click', () => navigate(-1));
+document.getElementById('btn-next').addEventListener('click', () => navigate(1));
+
+// Enter → 검색 / 다음
+['s-query', 's-date'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      if (hits.length > 0 && (document.getElementById('s-query').value || document.getElementById('s-date').value)) {
+        navigate(1);
+      } else {
+        doSearch();
+      }
+    }
+  });
+});
+
+// Space → 다음 결과 (포커스가 input 안에 있을 때는 제외)
+window.addEventListener('keydown', e => {
+  if (e.key === ' ' && document.activeElement.tagName !== 'INPUT') {
+    e.preventDefault();
+    if (hits.length > 0) navigate(1);
+  }
+});
+
+/* 페이지 로드 후 노드 스캔 */
+window.addEventListener('load', () => {
+  scanMemberNodes();
+  adjustContentPadding();
+  console.log(`[계보도] 회원 노드 ${memberNodes.length}개 감지됨`);
+});
+</script>
+</body>
+</html>

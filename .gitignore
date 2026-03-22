@@ -1,0 +1,38 @@
+# 환경 변수 / 시크릿
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 가상환경
+venv/
+.venv/
+env/
+.env_dir/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# 테스트 / 임시 파일
+*.log
+*.tmp
+dg_*.html
+
+# Vercel
+.vercel/
