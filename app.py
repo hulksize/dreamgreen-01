@@ -298,7 +298,14 @@ def api_html():
 @app.route("/api/debug")
 def api_debug():
     """
-    hulist.php 원본 HTML을 3가지 전략으로 파싱해 회원 데이터를 JSON으로 반환한다.
+    hulist.php 원본 HTML을 파싱해 회원 데이터를 JSON으로 반환한다.
+
+    쿼리 파라미터:
+      q    - 이름 또는 아이디에 포함된 문자열로 필터 (공백 무시, 대소문자 무시)
+             예) /api/debug?q=안정원
+      date - 가입일에 포함된 문자열로 필터
+             예) /api/debug?date=2026-02
+      raw  - 1 이면 raw_text 포함 (기본 생략)
     """
     if "userid" not in session:
         return jsonify({"error": "로그인 필요", "code": 401}), 401
@@ -317,12 +324,52 @@ def api_debug():
 
     members, strategy, diag = _parse_members(html)
 
+    # ── 쿼리 파라미터 파싱 ────────────────────────────────
+    q        = request.args.get("q",    "").strip()
+    date_f   = request.args.get("date", "").strip()
+    show_raw = request.args.get("raw",  "0") == "1"
+
+    def normalize(s):
+        """공백 제거 + 소문자"""
+        return re.sub(r"\s+", "", s or "").lower()
+
+    q_norm    = normalize(q)
+    date_norm = date_f.lower()
+
+    # ── 필터링 ───────────────────────────────────────────
+    filtered = []
+    for m in members:
+        name_n = normalize(m["name"])
+        id_n   = normalize(m["id"])
+        date_n = (m["date"] or "").lower()
+
+        match_q    = (not q_norm)    or (q_norm in name_n) or (q_norm in id_n)
+        match_date = (not date_norm) or (date_norm in date_n)
+
+        if match_q and match_date:
+            entry = {k: v for k, v in m.items() if k != "raw_text" or show_raw}
+            # 왜 매칭됐는지 명시
+            entry["_match_reason"] = []
+            if q_norm:
+                if q_norm in name_n: entry["_match_reason"].append(f"이름에 '{q}' 포함")
+                if q_norm in id_n:   entry["_match_reason"].append(f"아이디에 '{q}' 포함")
+            if date_norm and date_norm in date_n:
+                entry["_match_reason"].append(f"날짜에 '{date_f}' 포함")
+            filtered.append(entry)
+
+    is_filtered = bool(q or date_f)
+
     return jsonify({
         "login_user"    : userid,
         "strategy_used" : strategy,
-        "total"         : len(members),
-        "members"       : members,
-        "diagnostics"   : diag,   # 전략 실패 시 샘플 td 정보
+        "filter"        : {"q": q, "date": date_f} if is_filtered else None,
+        "total_all"     : len(members),       # 전체 파싱 수
+        "total_matched" : len(filtered),      # 필터 결과 수
+        "members"       : filtered if is_filtered else [
+            {k: v for k, v in m.items() if k != "raw_text" or show_raw}
+            for m in members
+        ],
+        "diagnostics"   : diag,
     })
 
 
