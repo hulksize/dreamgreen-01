@@ -5,9 +5,14 @@ from bs4 import BeautifulSoup
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 
 app = Flask(__name__)
-# Vercel 배포 시 환경변수 SECRET_KEY 설정 권장.
-# 없으면 개발용 기본값 사용 (프로덕션에서는 반드시 환경변수로 설정할 것).
 app.secret_key = os.environ.get("SECRET_KEY", "dreamgreen-flask-secret-2026")
+
+# Vercel(HTTPS) 환경에서는 Secure 쿠키가 필요하다.
+# VERCEL 환경변수는 Vercel 플랫폼이 자동으로 "1"로 설정한다.
+if os.environ.get("VERCEL"):
+    app.config["SESSION_COOKIE_SECURE"]   = True
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 BASE_URL = "http://dreamgreen.net"
 LOGIN_URL = f"{BASE_URL}/login/loginaction.php"
@@ -115,6 +120,33 @@ def fetch_raw_hulist(userid, cookies):
 
     except Exception as e:
         return None, f"페이지 로드 오류: {e}"
+
+
+def _resolve_auth():
+    """
+    세션 또는 HTTP Basic Auth 에서 (userid, cookies) 를 추출한다.
+
+    우선순위:
+      1) Flask 세션 (브라우저 로그인 후 쿠키 유지)
+      2) HTTP Basic Auth 헤더 (curl / 직접 API 호출 / Vercel 테스트)
+         예) curl -u myid:mypw "https://xxx.vercel.app/api/debug?q=안용운"
+
+    반환: (userid, cookies, error_msg)
+      error_msg 가 None 이 아니면 인증 실패.
+    """
+    # ── 1) 세션 ──────────────────────────────────────────
+    if "userid" in session:
+        return session["userid"], session.get("cookies", {}), None
+
+    # ── 2) HTTP Basic Auth ────────────────────────────────
+    auth = request.authorization
+    if auth and auth.username and auth.password:
+        cookies, err = try_login(auth.username, auth.password)
+        if err:
+            return None, None, err
+        return auth.username, cookies, None
+
+    return None, None, "로그인 필요"
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -290,17 +322,18 @@ def _parse_members(html):
 
 @app.route("/api/html")
 def api_html():
-    """hulist.php 원본 HTML을 text/plain 으로 그대로 출력한다."""
-    if "userid" not in session:
-        return "로그인 필요", 401
-
-    userid  = session["userid"]
-    cookies = session.get("cookies", {})
+    """
+    hulist.php 원본 HTML을 text/plain 으로 그대로 출력한다.
+    세션 또는 HTTP Basic Auth 로 인증한다.
+    """
+    userid, cookies, err = _resolve_auth()
+    if err:
+        return jsonify({"error": err}), 401
 
     try:
         html = _fetch_hulist_html(userid, cookies)
     except Exception as e:
-        return f"오류: {e}", 500
+        return jsonify({"error": str(e)}), 500
 
     return html, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
@@ -311,19 +344,20 @@ def api_html():
 def api_debug():
     """
     hulist.php 원본 HTML을 파싱해 회원 데이터를 JSON으로 반환한다.
+    세션 또는 HTTP Basic Auth 로 인증한다.
 
     쿼리 파라미터:
-      q    - 이름 또는 아이디에 포함된 문자열로 필터 (공백 무시, 대소문자 무시)
-             예) /api/debug?q=안정원
-      date - 가입일에 포함된 문자열로 필터
-             예) /api/debug?date=2026-02
-      raw  - 1 이면 raw_text 포함 (기본 생략)
+      q         - 이름 또는 아이디에 포함된 문자열로 필터 (공백 무시, 대소문자 무시)
+                  예) /api/debug?q=안정원
+      date      - 가입일에 포함된 문자열로 필터
+                  예) /api/debug?date=2026-02
+      raw       - 1 이면 raw_text 포함 (기본 생략)
+      dup_name  - 1 이면 동일 이름이 여러 id 에 등록된 항목만 출력
+                  예) /api/debug?q=안용운&dup_name=1  → 중복 이름 원인 탐색
     """
-    if "userid" not in session:
-        return jsonify({"error": "로그인 필요", "code": 401}), 401
-
-    userid  = session["userid"]
-    cookies = session.get("cookies", {})
+    userid, cookies, err = _resolve_auth()
+    if err:
+        return jsonify({"error": err}), 401
 
     try:
         html = _fetch_hulist_html(userid, cookies)
@@ -337,9 +371,10 @@ def api_debug():
     members, strategy, diag = _parse_members(html)
 
     # ── 쿼리 파라미터 파싱 ────────────────────────────────
-    q        = request.args.get("q",    "").strip()
-    date_f   = request.args.get("date", "").strip()
-    show_raw = request.args.get("raw",  "0") == "1"
+    q        = request.args.get("q",        "").strip()
+    date_f   = request.args.get("date",     "").strip()
+    show_raw = request.args.get("raw",      "0") == "1"
+    dup_name = request.args.get("dup_name", "0") == "1"
 
     def normalize(s):
         """공백 제거 + 소문자"""
@@ -360,7 +395,6 @@ def api_debug():
 
         if match_q and match_date:
             entry = {k: v for k, v in m.items() if k != "raw_text" or show_raw}
-            # 왜 매칭됐는지 명시
             entry["_match_reason"] = []
             if q_norm:
                 if q_norm in name_n: entry["_match_reason"].append(f"이름에 '{q}' 포함")
@@ -369,14 +403,45 @@ def api_debug():
                 entry["_match_reason"].append(f"날짜에 '{date_f}' 포함")
             filtered.append(entry)
 
+    # ── dup_name=1: 동일 이름이 여러 id 에 등록된 항목만 출력 ─────
+    # 예) /api/debug?q=안용운&dup_name=1  →  "안용운"을 이름으로 가진
+    #     id 목록 + 각 id 에 실제 등록된 이름을 함께 출력해 오입력 탐색
+    if dup_name:
+        base_list = filtered if (q or date_f) else members
+        # 이름 기준 그룹핑 (공백 정규화 후 비교)
+        from collections import defaultdict
+        name_groups: dict = defaultdict(list)
+        for m in base_list:
+            key = normalize(m["name"])
+            name_groups[key].append(m)
+        # 같은 normalized name 을 가진 id 가 2개 이상인 그룹만
+        dup_entries = []
+        for key, group in sorted(name_groups.items()):
+            if len(group) >= 2:
+                dup_entries.append({
+                    "name_normalized": key,
+                    "count": len(group),
+                    "entries": [
+                        {k: v for k, v in m.items() if k != "raw_text" or show_raw}
+                        for m in group
+                    ],
+                })
+        return jsonify({
+            "login_user"      : userid,
+            "strategy_used"   : strategy,
+            "filter"          : {"q": q, "date": date_f, "dup_name": True},
+            "total_dup_groups": len(dup_entries),
+            "dup_groups"      : dup_entries,
+        })
+
     is_filtered = bool(q or date_f)
 
     return jsonify({
         "login_user"    : userid,
         "strategy_used" : strategy,
         "filter"        : {"q": q, "date": date_f} if is_filtered else None,
-        "total_all"     : len(members),       # 전체 파싱 수
-        "total_matched" : len(filtered),      # 필터 결과 수
+        "total_all"     : len(members),
+        "total_matched" : len(filtered),
         "members"       : filtered if is_filtered else [
             {k: v for k, v in m.items() if k != "raw_text" or show_raw}
             for m in members
