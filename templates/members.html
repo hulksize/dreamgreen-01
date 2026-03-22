@@ -508,11 +508,15 @@ function noSpace(str) {
   return (str || '').replace(/\s+/g, '').toLowerCase();
 }
 
+// 마지막으로 실제 검색이 실행됐을 때의 정규화 쿼리 저장 (Enter 중복검색 방지용)
+let lastSearchedQuery = '';
+let lastSearchedDate  = '';
+
 /* ══════════════════════════════════════
    검색
 ══════════════════════════════════════ */
 function doSearch() {
-  // 공백 제거 후 소문자 정규화
+  // 현재 입력값 읽기 (원본 보존 + 정규화본 생성)
   const rawQuery = document.getElementById('s-query').value.trim();
   const rawDate  = document.getElementById('s-date').value.trim();
   const query    = noSpace(rawQuery);
@@ -520,20 +524,25 @@ function doSearch() {
 
   // 이전 하이라이트 제거
   clearHighlights();
-  hits = [];
+  hits   = [];
   hitIdx = -1;
 
   if (!query && !date) {
+    lastSearchedQuery = '';
+    lastSearchedDate  = '';
     updateResultBar();
     return;
   }
+
+  // 마지막 검색어 갱신 (Enter 판단에 사용)
+  lastSearchedQuery = query;
+  lastSearchedDate  = date;
 
   // 노드가 아직 스캔되지 않았으면 스캔
   if (memberNodes.length === 0) scanMemberNodes();
 
   console.group(`[검색] query="${query}" date="${date}"  (전체 노드: ${memberNodes.length}개)`);
   memberNodes.forEach((node, i) => {
-    // 이름·아이디 양쪽 공백 제거 후 비교
     const nameN  = noSpace(node.name);
     const idN    = noSpace(node.id);
     const dateL  = (node.date || '').toLowerCase();
@@ -543,8 +552,8 @@ function doSearch() {
     const matched = matchQ && matchD;
 
     console.log(
-      `#${i+1} 이름="${node.name}"(norm="${nameN}") 아이디="${node.id}"(norm="${idN}") 날짜="${node.date}"` +
-      ` → nameHit=${nameN.includes(query)} idHit=${idN.includes(query)} dateHit=${dateL.includes(date)} → ${matched ? '✅HIT' : '❌'}`
+      `#${i+1} 이름="${node.name}"(norm="${nameN}") 아이디="${node.id}"` +
+      ` → nameHit=${nameN.includes(query)} idHit=${idN.includes(query)} → ${matched ? '✅' : '❌'}`
     );
 
     if (matched) {
@@ -560,7 +569,7 @@ function doSearch() {
     focusHit(0);
   }
 
-  // 결과바에는 원본 입력값(공백 포함) 그대로 표시
+  // 결과바에 현재 검색어(원본) 즉시 업데이트
   updateResultBar(rawQuery, rawDate);
   adjustContentPadding();
 }
@@ -600,10 +609,9 @@ function clearSearch() {
 }
 
 function updateResultBar(query, date) {
-  const bar    = document.getElementById('result-bar');
-  const total  = document.getElementById('hit-total');
-  const posEl  = document.getElementById('pos-text');
-  const resEl  = document.getElementById('result-text');
+  const bar   = document.getElementById('result-bar');
+  const posEl = document.getElementById('pos-text');
+  const resEl = document.getElementById('result-text');
 
   if (!query && !date) {
     bar.classList.remove('visible');
@@ -611,11 +619,15 @@ function updateResultBar(query, date) {
   }
 
   bar.classList.add('visible');
-  total.textContent = hits.length;
 
-  // 검색어 표시 (예: "이창현 검색결과: 3개")
-  const label = [query, date].filter(Boolean).join(' + ');
-  resEl.innerHTML = `<strong>"${label}"</strong> 검색결과: <strong>${hits.length}</strong>개`;
+  // 현재 검색어를 그대로 표시: "'안' 검색결과: 245개"
+  const parts = [];
+  if (query) parts.push(`'${query}'`);
+  if (date)  parts.push(`날짜 '${date}'`);
+  const label = parts.join(' + ');
+
+  resEl.innerHTML =
+    `${label} 검색결과: <strong style="color:#fbbf24">${hits.length}</strong>개`;
 
   posEl.textContent = hits.length > 0 ? `${hitIdx + 1} / ${hits.length}` : '';
   updateNavBtns();
@@ -636,15 +648,20 @@ document.getElementById('btn-clear').addEventListener('click', clearSearch);
 document.getElementById('btn-prev').addEventListener('click', () => navigate(-1));
 document.getElementById('btn-next').addEventListener('click', () => navigate(1));
 
-// Enter → 검색 / 다음
+// Enter → 입력값이 바뀌었으면 새 검색, 같으면 다음 결과로 이동
 ['s-query', 's-date'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      if (hits.length > 0 && (document.getElementById('s-query').value || document.getElementById('s-date').value)) {
-        navigate(1);
-      } else {
-        doSearch();
-      }
+    if (e.key !== 'Enter') return;
+
+    const currentQuery = noSpace(document.getElementById('s-query').value.trim());
+    const currentDate  = document.getElementById('s-date').value.trim().toLowerCase();
+
+    // 검색어가 바뀌었거나 아직 검색 안 한 상태면 새 검색 실행
+    if (currentQuery !== lastSearchedQuery || currentDate !== lastSearchedDate) {
+      doSearch();
+    } else if (hits.length > 0) {
+      // 같은 검색어 Enter 반복 → 다음 결과로 이동
+      navigate(1);
     }
   });
 });
