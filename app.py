@@ -223,7 +223,10 @@ def _parse_members(html):
     # → \n 으로 split 후 인덱스로 직접 매핑
     #   [0]="|"  [1]=name  [2]=id  [3]=kind  [4]=sales  [5]=date  [6]="|"
     members = []
-    seen    = set()
+    # 중복 방지 키: (name, id) 문자열 튜플 완전 일치 기준
+    # ─ box_text[:100] 방식은 이름이 같고 id만 다른 경우(ann02 vs ann020)
+    #   를 같은 사람으로 잘못 처리할 수 있으므로 사용하지 않음
+    seen: set[tuple[str, str]] = set()
 
     for header_td in header_tds:
         box_table = header_td.find_parent("table")
@@ -236,11 +239,6 @@ def _parse_members(html):
         if len(box_text) > 2000:
             continue
 
-        key = box_text[:100]
-        if key in seen:
-            continue
-        seen.add(key)
-
         # ── 줄바꿈 split 파싱 ──────────────────────────────
         lines = [l.strip() for l in box_text.split("\n") if l.strip()]
         # "|" 구분자 제거 후 실 데이터만 남김
@@ -250,16 +248,24 @@ def _parse_members(html):
         if len(data) < 5:
             continue
 
-        name  = data[0] if len(data) > 0 else ""
-        mid   = data[1] if len(data) > 1 else ""
-        kind  = data[2] if len(data) > 2 else ""
-        sales = data[3] if len(data) > 3 else ""
-        date  = data[4] if len(data) > 4 else ""
+        # id 는 반드시 str() 로 저장 — 숫자로 변환하지 않음
+        # ann02 와 ann020 은 서로 다른 문자열임을 보장
+        name  = str(data[0]).strip() if len(data) > 0 else ""
+        mid   = str(data[1]).strip() if len(data) > 1 else ""   # ← str 명시
+        kind  = str(data[2]).strip() if len(data) > 2 else ""
+        sales = str(data[3]).strip() if len(data) > 3 else ""
+        date  = str(data[4]).strip() if len(data) > 4 else ""
 
         # 날짜 형식이 아니면 DATE_RE 로 재탐색 (순서가 다를 경우 대비)
         if not DATE_RE.search(date):
             dm = DATE_RE.search(box_text)
             date = dm.group(0) if dm else date
+
+        # 중복 검사: (이름, 아이디) 문자열 완전 일치일 때만 중복으로 처리
+        dedup_key = (name, mid)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
 
         members.append({
             "index"   : len(members) + 1,
@@ -270,6 +276,14 @@ def _parse_members(html):
             "date"    : date,
             "raw_text": box_text,
         })
+
+    # ── 문자열 기준 정렬: 이름 → 아이디 오름차순 ──────────
+    # id 를 숫자로 변환하지 않고 순수 문자열 비교(locale 무관 일관성)
+    # ann02 < ann020  (사전식: '2' < '2' + '0', 즉 짧은 쪽이 먼저)
+    members.sort(key=lambda m: (m["name"].lower(), m["id"].lower()))
+    # index 재부여 (정렬 후 순번이 바뀌므로)
+    for i, m in enumerate(members, 1):
+        m["index"] = i
 
     return members, strategy_used, None
 

@@ -416,27 +416,40 @@ let hitIdx      = -1;
    회원 박스 raw_text 줄바꿈 split 파싱
    구조: "|\n이름\n아이디\n회원종류\n매출액\n가입일\n|"
    → "|" 제거 후: [name, id, kind, sales, date]
+
+   ※ id 는 반드시 String 으로 유지.
+      Number() / parseInt() 변환 금지.
+      "ann02" 와 "ann020" 은 서로 다른 문자열임을 보장.
 ────────────────────────────────────── */
 function parseBoxLines(text) {
   const lines = text.split('\n')
     .map(l => l.trim())
     .filter(l => l && l !== '|');
 
-  // 최소 2개 이상이어야 유효 (이름 + 아이디 최소)
   if (lines.length < 2) return null;
 
-  const name  = lines[0] || '';
-  const id    = lines[1] || '';
-  const kind  = lines[2] || '';
-  const sales = lines[3] || '';
-  const date  = lines[4] || '';
+  // String() 으로 명시적 문자열 보장
+  const name  = String(lines[0] || '');
+  const id    = String(lines[1] || '');   // ← 절대 숫자 변환 안 함
+  const kind  = String(lines[2] || '');
+  const sales = String(lines[3] || '');
+  const date  = String(lines[4] || '');
 
-  // 날짜 필드가 날짜 형식이 아니면 전체 텍스트에서 재탐색
   const realDate = DATE_RE.test(date)
     ? date
     : (DATE_RE.exec(text) || [])[0] || '';
 
   return { name, id, kind, sales, date: realDate };
+}
+
+/* ──────────────────────────────────────
+   중복 방지 키 생성
+   (이름, 아이디) 문자열 완전 일치일 때만 같은 사람으로 처리.
+   "ann02" ≠ "ann020" 은 문자열 비교이므로 자동으로 구분됨.
+────────────────────────────────────── */
+function dedupKey(name, id) {
+  // 구분자 \x00 사용 (이름이나 아이디에 포함될 수 없는 문자)
+  return name + '\x00' + id;
 }
 
 /* ──────────────────────────────────────
@@ -449,46 +462,47 @@ function scanMemberNodes() {
   const container = document.getElementById('tree-inner');
   if (!container) return;
 
+  // (이름, 아이디) 문자열 기준 중복 방지 Set
+  const seenKeys = new Set();
+
+  function tryAddNode(el, text) {
+    if (!text || text.length > 2000) return;
+    const parsed = parseBoxLines(text);
+    if (!parsed || (!parsed.name && !parsed.id)) return;
+
+    // 중복 검사: 문자열 완전 일치 기준
+    const k = dedupKey(parsed.name, parsed.id);
+    if (seenKeys.has(k)) return;
+    seenKeys.add(k);
+
+    memberNodes.push({ el, ...parsed });
+  }
+
   // ── 전략 1: bgcolor="#001e5f" td 의 부모 table ──
   const headerTds = Array.from(
     container.querySelectorAll('td[bgcolor]')
   ).filter(td => (td.getAttribute('bgcolor') || '').toLowerCase().includes('001e5f'));
 
   if (headerTds.length > 0) {
-    const seen = new Set();
+    const seenEl = new Set();   // DOM 요소 중복 방지
     headerTds.forEach(td => {
       const boxTable = td.closest('table');
-      if (!boxTable || seen.has(boxTable)) return;
-      seen.add(boxTable);
-
-      const text   = (boxTable.innerText || '').trim();
-      if (text.length > 2000) return;
-
-      const parsed = parseBoxLines(text);
-      if (!parsed || (!parsed.name && !parsed.id)) return;
-
-      memberNodes.push({ el: boxTable, ...parsed });
+      if (!boxTable || seenEl.has(boxTable)) return;
+      seenEl.add(boxTable);
+      tryAddNode(boxTable, (boxTable.innerText || '').trim());
     });
   }
 
   // ── 전략 2 폴백: 날짜를 포함하는 가장 안쪽 table ──
   if (memberNodes.length === 0) {
-    const allTables = Array.from(container.querySelectorAll('table'));
-    allTables.forEach(tbl => {
+    Array.from(container.querySelectorAll('table')).forEach(tbl => {
       const text = (tbl.innerText || '').trim();
-      if (!DATE_RE.test(text))  return;
-      if (text.length > 800)    return;
-
-      // 날짜를 가진 자식 table 이 있으면 컨테이너 → 스킵
+      if (!DATE_RE.test(text) || text.length > 800) return;
       const childHasDate = Array.from(tbl.querySelectorAll('table')).some(
         c => DATE_RE.test((c.innerText || '').trim())
       );
       if (childHasDate) return;
-
-      const parsed = parseBoxLines(text);
-      if (!parsed || (!parsed.name && !parsed.id)) return;
-
-      memberNodes.push({ el: tbl, ...parsed });
+      tryAddNode(tbl, text);
     });
   }
 
