@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
@@ -13,6 +14,34 @@ if os.environ.get("VERCEL"):
     app.config["SESSION_COOKIE_SECURE"]   = True
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# ─── 서버 메모리 캐시 ─────────────────────────────────────────────────────────
+# { userid: { "html": str, "ts": float } }
+# Vercel serverless 에서는 warm 인스턴스 재사용 시에만 유효하며,
+# 콜드 스타트 시 초기화된다. 로컬/Render 환경에서는 완전히 유지됨.
+_CACHE: dict[str, dict] = {}
+CACHE_TTL = 1800  # 캐시 유효시간: 30분 (초 단위)
+
+
+def _cache_get(userid: str) -> "str | None":
+    entry = _CACHE.get(userid)
+    if entry and (time.time() - entry["ts"]) < CACHE_TTL:
+        return entry["html"]
+    return None
+
+
+def _cache_set(userid: str, html: str) -> None:
+    _CACHE[userid] = {"html": html, "ts": time.time()}
+
+
+def _cache_clear(userid: str) -> None:
+    _CACHE.pop(userid, None)
+
+
+def _cache_age_seconds(userid: str) -> int:
+    """캐시가 생성된 지 몇 초 지났는지. 캐시 없으면 -1."""
+    entry = _CACHE.get(userid)
+    return int(time.time() - entry["ts"]) if entry else -1
 
 BASE_URL = "http://dreamgreen.net"
 LOGIN_URL = f"{BASE_URL}/login/loginaction.php"
@@ -74,52 +103,65 @@ def try_login(userid, userpw):
         return None, f"서버 연결 오류: {e}"
 
 
-def fetch_raw_hulist(userid, cookies):
-    """
-    hulist.php 원본 HTML을 가져와 URL을 절대경로로 수정하고
-    <script> 태그를 제거한 뒤 <body> 안쪽 내용만 반환한다.
-    """
+def _fetch_from_site(userid: str, cookies: dict) -> "tuple[str, str | None]":
+    """dreamgreen.net 에서 hulist.php 원본 HTML을 직접 가져온다 (캐시 미사용)."""
     try:
         resp = requests.get(
             f"{HULIST_URL}?userid={userid}",
             headers=HEADERS,
             cookies=cookies,
-            timeout=15,
+            timeout=20,
         )
         resp.encoding = resp.apparent_encoding or "utf-8"
-        html = resp.text
-
-        for kw in ERROR_KEYWORDS:
-            if kw in html:
-                return None, kw
-
-        soup = BeautifulSoup(html, "lxml")
-
-        # JS 제거 (충돌 방지)
-        for tag in soup.find_all("script"):
-            tag.decompose()
-
-        # 상대 URL → 절대 URL
-        for tag in soup.find_all(True):
-            for attr in ("src", "href", "action"):
-                val = tag.get(attr, "")
-                if not val:
-                    continue
-                if val.startswith(("http://", "https://", "#", "data:", "javascript:", "mailto:")):
-                    continue
-                if val.startswith("./"):
-                    tag[attr] = BASE_URL + val[1:]
-                elif val.startswith("/"):
-                    tag[attr] = BASE_URL + val
-                else:
-                    tag[attr] = BASE_URL + "/" + val
-
-        body = soup.find("body")
-        content = body.decode_contents() if body else str(soup)
-        return content, None
-
+        return resp.text, None
     except Exception as e:
-        return None, f"페이지 로드 오류: {e}"
+        return "", f"페이지 로드 오류: {e}"
+
+
+def _get_raw_html(userid: str, cookies: dict, force: bool = False) -> "tuple[str, str | None]":
+    """
+    원본 HTML 반환. 캐시 우선.
+    force=True 면 캐시를 무시하고 재요청 후 갱신.
+    """
+    if not force:
+        cached = _cache_get(userid)
+        if cached is not None:
+            return cached, None
+
+    html, err = _fetch_from_site(userid, cookies)
+    if err:
+        return "", err
+
+    _cache_set(userid, html)
+    return html, None
+
+
+def _html_to_display(raw_html: str) -> "tuple[str | None, str | None]":
+    """원본 HTML → 화면 표시용 가공 (script 제거, URL 절대화)."""
+    for kw in ERROR_KEYWORDS:
+        if kw in raw_html:
+            return None, kw
+
+    soup = BeautifulSoup(raw_html, "lxml")
+    for tag in soup.find_all("script"):
+        tag.decompose()
+
+    for tag in soup.find_all(True):
+        for attr in ("src", "href", "action"):
+            val = tag.get(attr, "")
+            if not val:
+                continue
+            if val.startswith(("http://", "https://", "#", "data:", "javascript:", "mailto:")):
+                continue
+            if val.startswith("./"):
+                tag[attr] = BASE_URL + val[1:]
+            elif val.startswith("/"):
+                tag[attr] = BASE_URL + val
+            else:
+                tag[attr] = BASE_URL + "/" + val
+
+    body = soup.find("body")
+    return (body.decode_contents() if body else str(soup)), None
 
 
 def _resolve_auth():
@@ -172,31 +214,23 @@ def login():
 
 @app.route("/members")
 def members():
+    """
+    계보도 페이지를 즉시 반환한다.
+    실제 HTML 데이터는 클라이언트 JS 가 /api/tree 를 비동기 호출해서 가져온다.
+    → 로그인 후 페이지가 즉시 열리고, 계보도가 비동기로 로드됨.
+    """
     if "userid" not in session:
         return redirect(url_for("login"))
-
     userid = session["userid"]
-    cookies = session.get("cookies", {})
-
-    content, err = fetch_raw_hulist(userid, cookies)
-    return render_template(
-        "members.html",
-        content=content,
-        userid=userid,
-        error=err,
-    )
+    return render_template("members.html", userid=userid)
 
 
-def _fetch_hulist_html(userid, cookies):
-    """hulist.php 원본 HTML을 그대로 반환한다 (가공 없음)."""
-    resp = requests.get(
-        f"{HULIST_URL}?userid={userid}",
-        headers=HEADERS,
-        cookies=cookies,
-        timeout=15,
-    )
-    resp.encoding = resp.apparent_encoding or "utf-8"
-    return resp.text
+def _fetch_hulist_html(userid: str, cookies: dict, force: bool = False) -> str:
+    """원본 HTML 반환 (캐시 우선). /api/debug, /api/html 에서 사용."""
+    html, err = _get_raw_html(userid, cookies, force=force)
+    if err:
+        raise RuntimeError(err)
+    return html
 
 
 def _parse_members(html):
@@ -447,6 +481,69 @@ def api_debug():
             for m in members
         ],
         "diagnostics"   : diag,
+    })
+
+
+# ─── /api/tree  ──────────────────────────────────────────────────────────────
+
+@app.route("/api/tree")
+def api_tree():
+    """
+    계보도 표시용 가공 HTML을 JSON으로 반환한다. 캐시 우선.
+    클라이언트 JS가 비동기로 호출한다.
+
+    응답:
+      { "content": "<body 내부 HTML>",
+        "cached": true/false,
+        "cache_age_sec": 123 }
+    """
+    userid, cookies, err = _resolve_auth()
+    if err:
+        return jsonify({"error": err}), 401
+
+    cache_age = _cache_age_seconds(userid)
+    raw_html, err = _get_raw_html(userid, cookies)
+    if err:
+        return jsonify({"error": err}), 500
+
+    content, err = _html_to_display(raw_html)
+    if err:
+        return jsonify({"error": err}), 403
+
+    was_cached = cache_age >= 0
+    return jsonify({
+        "content"      : content,
+        "cached"       : was_cached,
+        "cache_age_sec": cache_age,
+    })
+
+
+# ─── /api/refresh  ───────────────────────────────────────────────────────────
+
+@app.route("/api/refresh")
+def api_refresh():
+    """
+    서버 캐시를 강제로 초기화하고 dreamgreen.net 에서 최신 데이터를 가져온다.
+    응답: { "ok": true, "message": "..." }
+    """
+    userid, cookies, err = _resolve_auth()
+    if err:
+        return jsonify({"error": err}), 401
+
+    _cache_clear(userid)
+
+    raw_html, err = _get_raw_html(userid, cookies, force=True)
+    if err:
+        return jsonify({"error": err}), 500
+
+    content, err = _html_to_display(raw_html)
+    if err:
+        return jsonify({"error": err}), 403
+
+    return jsonify({
+        "ok"     : True,
+        "message": "캐시를 초기화하고 최신 데이터를 가져왔습니다.",
+        "content": content,
     })
 
 

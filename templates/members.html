@@ -262,6 +262,69 @@
       color: #c0392b;
       font-size: 14px;
     }
+
+    /* ══════════════════════════════════════
+       로딩 오버레이
+    ══════════════════════════════════════ */
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 8000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(6, 3, 60, 0.82);
+      backdrop-filter: blur(4px);
+      gap: 20px;
+      transition: opacity 0.4s ease;
+    }
+
+    #loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .loading-spinner {
+      width: 52px;
+      height: 52px;
+      border: 5px solid rgba(255,255,255,0.18);
+      border-top-color: #fbbf24;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-msg {
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    .loading-sub {
+      color: rgba(255,255,255,0.55);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .loading-bar-wrap {
+      width: 200px;
+      height: 4px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .loading-bar {
+      height: 100%;
+      width: 0%;
+      background: #fbbf24;
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
   </style>
 </head>
 <body>
@@ -284,6 +347,7 @@
     </div>
     <button class="btn-search" id="btn-do-search">검색</button>
     <button class="btn-clear" id="btn-clear">초기화</button>
+    <button class="btn-clear" id="btn-refresh" title="캐시를 초기화하고 최신 데이터를 불러옵니다">↻ 새로고침</button>
   </div>
 
   <div id="result-bar">
@@ -305,20 +369,21 @@
   </div>
 </div>
 
-<!-- ══════════════════════ 에러 ══════════════════════ -->
-{% if error %}
-<div class="error-box" style="margin-top: 100px;">⚠ {{ error }}</div>
-{% endif %}
+<!-- ══════════════════════ 로딩 오버레이 ══════════════════════ -->
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-msg">
+    계보도 불러오는 중…
+    <div class="loading-sub" id="loading-sub">최초 1회만 시간이 걸립니다 (약 5~15초)</div>
+  </div>
+  <div class="loading-bar-wrap">
+    <div class="loading-bar" id="loading-bar"></div>
+  </div>
+</div>
 
 <!-- ══════════════════════ 계보도 원본 HTML ══════════════════════ -->
 <div id="tree-content">
-  <div id="tree-inner">
-    {% if content %}
-      {{ content | safe }}
-    {% elif not error %}
-      <p style="color:#aaa;text-align:center;padding:60px 0;">불러올 내용이 없습니다.</p>
-    {% endif %}
-  </div>
+  <div id="tree-inner"></div>
 </div>
 
 <script>
@@ -360,7 +425,6 @@ function adjustContentPadding() {
   content.style.paddingTop = (searchPanel.offsetHeight + 8) + 'px';
 }
 
-window.addEventListener('load',   fixPanelZoom);
 window.addEventListener('resize', fixPanelZoom);
 
 /* ══════════════════════════════════════
@@ -695,11 +759,100 @@ window.addEventListener('keydown', e => {
   }
 });
 
-/* 페이지 로드 후 노드 스캔 */
-window.addEventListener('load', () => {
-  scanMemberNodes();
+/* ══════════════════════════════════════
+   비동기 계보도 로딩
+   1) /api/tree 호출 → HTML 받아서 #tree-inner 에 주입
+   2) 로딩 오버레이 닫기
+   3) 회원 노드 스캔 → 검색 준비 완료
+══════════════════════════════════════ */
+const loadingOverlay = document.getElementById('loading-overlay');
+const loadingBar     = document.getElementById('loading-bar');
+const loadingSub     = document.getElementById('loading-sub');
+
+function showError(msg) {
+  loadingOverlay.classList.add('hidden');
+  treeInner.innerHTML =
+    `<div class="error-box" style="margin:40px 20px;">⚠ ${msg}</div>`;
   adjustContentPadding();
-  console.log(`[계보도] 회원 노드 ${memberNodes.length}개 감지됨`);
+}
+
+function hideLoading() {
+  loadingBar.style.width = '100%';
+  setTimeout(() => {
+    loadingOverlay.classList.add('hidden');
+  }, 300);
+}
+
+async function loadTree(forceRefresh) {
+  const url = forceRefresh ? '/api/refresh' : '/api/tree';
+
+  loadingOverlay.classList.remove('hidden');
+  loadingBar.style.width = '0%';
+
+  // 가짜 프로그레스 바 애니메이션 (실제 진행률 측정 불가하므로)
+  const fakeProgress = (() => {
+    let pct = 0;
+    const targets = [20, 45, 65, 80, 90];
+    let ti = 0;
+    const iv = setInterval(() => {
+      if (ti >= targets.length) { clearInterval(iv); return; }
+      pct = targets[ti++];
+      loadingBar.style.width = pct + '%';
+    }, 1500);
+    return () => clearInterval(iv);
+  })();
+
+  try {
+    const resp = await fetch(url, { credentials: 'same-origin' });
+    fakeProgress();
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      showError(err.error || `서버 오류 (${resp.status})`);
+      return;
+    }
+
+    const data = await resp.json();
+
+    if (data.error) { showError(data.error); return; }
+
+    treeInner.innerHTML = data.content || '';
+
+    // 캐시 여부를 로딩 메시지에 잠깐 표시
+    if (data.cached) {
+      const age = data.cache_age_sec;
+      const ageStr = age < 60 ? `${age}초` : `${Math.floor(age / 60)}분`;
+      loadingSub.textContent = `캐시 데이터 사용 (${ageStr} 전 저장됨)`;
+    } else {
+      loadingSub.textContent = '새 데이터를 불러왔습니다. 다음 요청부터는 즉시 로드됩니다.';
+    }
+
+    hideLoading();
+    scanMemberNodes();
+    adjustContentPadding();
+    applyZoom();
+    console.log(`[계보도] 회원 노드 ${memberNodes.length}개 감지됨 (cached=${data.cached})`);
+
+  } catch (e) {
+    fakeProgress();
+    showError('네트워크 오류: ' + e.message);
+  }
+}
+
+// 새로고침 버튼 (캐시 강제 초기화 후 재요청)
+document.getElementById('btn-refresh').addEventListener('click', async () => {
+  memberNodes = [];
+  hits = [];
+  hitIdx = -1;
+  clearHighlights();
+  updateResultBar();
+  loadingSub.textContent = '최신 데이터를 불러오는 중…';
+  await loadTree(true);
+});
+
+window.addEventListener('load', () => {
+  fixPanelZoom();
+  loadTree(false);
 });
 </script>
 </body>
